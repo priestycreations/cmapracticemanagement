@@ -1383,7 +1383,6 @@ function InvoiceViewer({ inv, firm, onClose }) {
   const sc = statusColors[inv.status] || "#6b7280";
 
   const handlePrint = () => {
-    const el = document.getElementById("invoice-print-area");
     const win = window.open("","_blank","width=900,height=700");
     win.document.write(`<html><head><title>Invoice ${inv.no}</title>
     <style>
