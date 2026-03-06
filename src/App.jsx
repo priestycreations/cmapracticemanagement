@@ -1,4 +1,78 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
+
+// ─── SUPABASE CLIENT ──────────────────────────────────────────────────────────
+// Replace these two values with your own from supabase.com → Project Settings → API
+const SUPABASE_URL  = "https://xokbxkhkkjchptuaajog.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhva2J4a2hra2pjaHB0dWFham9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MTQ5NjEsImV4cCI6MjA4ODI5MDk2MX0.vlWPzI4K8y7GKhdru4lwRpfjoeAd-o8aHzMGWCB-Bdw";
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ─── GENERIC DB HOOK ─────────────────────────────────────────────────────────
+// useTable(tableName, initRows) → [rows, loading, add, update, remove, reload]
+function useTable(table, init = []) {
+  const [rows, setRows]       = useState(init);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await sb.from(table).select("*").order("id", { ascending: true });
+    if (!error && data) setRows(data);
+    setLoading(false);
+  }, [table]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async (row) => {
+    const { data, error } = await sb.from(table).insert([row]).select();
+    if (!error && data) setRows(r => [...r, ...data]);
+    return { data, error };
+  };
+
+  const update = async (id, changes) => {
+    const { data, error } = await sb.from(table).update(changes).eq("id", id).select();
+    if (!error && data) setRows(r => r.map(x => x.id === id ? data[0] : x));
+    return { data, error };
+  };
+
+  const remove = async (id) => {
+    const { error } = await sb.from(table).delete().eq("id", id);
+    if (!error) setRows(r => r.filter(x => x.id !== id));
+    return { error };
+  };
+
+  return [rows, loading, add, update, remove, load];
+}
+
+// ─── FIRM SETTINGS HOOK ───────────────────────────────────────────────────────
+function useFirmSettings(defaultFirm) {
+  const [firm, setFirmState] = useState(defaultFirm);
+  const [firmLoading, setFirmLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("firm_settings").select("data").eq("firm_id","default").single();
+      if (data?.data && Object.keys(data.data).length > 0) setFirmState({...defaultFirm, ...data.data});
+      setFirmLoading(false);
+    })();
+  }, []);
+
+  const saveFirm = async (newFirm) => {
+    setFirmState(newFirm);
+    await sb.from("firm_settings").upsert({ firm_id:"default", data: newFirm, updated_at: new Date().toISOString() });
+  };
+
+  return [firm, saveFirm, firmLoading];
+}
+
+// ─── LOADING SPINNER ─────────────────────────────────────────────────────────
+const Spinner = () => (
+  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:60, flexDirection:"column", gap:12 }}>
+    <div style={{ width:36, height:36, border:"3px solid #e5e7eb", borderTopColor:"#2563eb",
+      borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
+    <div style={{ fontSize:13, color:"#9ca3af" }}>Loading from database…</div>
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  </div>
+);
 
 // ─── ICONS (inline SVG) ───────────────────────────────────────────────────────
 const Icon = ({ name, size = 16 }) => {
@@ -290,8 +364,14 @@ const DEFAULT_FIRM = {
   address:"123, Business Park, Andheri East", city:"Mumbai", state:"Maharashtra", pin:"400069",
   phone:"022-12345678", mobile:"9876543210", email:"info@sharmaassociates.com",
   website:"www.sharmaassociates.com", pan:"AABCS1234D", gstin:"27AABCS1234D1Z5",
-  membershipNo:"012345", regNo:"W-1234", bankName:"HDFC Bank", bankAccount:"12345678901",
-  bankIFSC:"HDFC0001234", bankBranch:"Andheri East Branch",
+  membershipNo:"012345", regNo:"W-1234",
+  banks:[
+    { id:1, label:"HDFC Current", bankName:"HDFC Bank", accountNo:"12345678901", ifsc:"HDFC0001234", branch:"Andheri East Branch", type:"Current", primary:true },
+    { id:2, label:"SBI Savings",  bankName:"State Bank of India", accountNo:"98765432100", ifsc:"SBIN0001234", branch:"Fort Branch", type:"Savings", primary:false },
+    { id:3, label:"Axis OD",      bankName:"Axis Bank", accountNo:"11223344556", ifsc:"UTIB0001234", branch:"BKC Branch", type:"OD", primary:false },
+    { id:4, label:"Petty Cash",   bankName:"Cash", accountNo:"", ifsc:"", branch:"", type:"Cash", primary:false },
+    { id:5, label:"Cash in Hand", bankName:"Cash", accountNo:"", ifsc:"", branch:"", type:"Cash", primary:false },
+  ],
   invoicePrefix:"INV", invoiceFooter:"Thank you for your business. Payment due within 30 days.",
   currency:"₹", taxRate:"18",
 };
@@ -299,7 +379,7 @@ const DEFAULT_FIRM = {
 export default function App() {
   const [activeModule, setActiveModule] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [firm, setFirm] = useState(DEFAULT_FIRM);
+  const [firm, saveFirm, firmLoading] = useFirmSettings(DEFAULT_FIRM);
 
   const allModules = MODULES;
 
@@ -373,12 +453,12 @@ export default function App() {
         <div style={{ flex:1, overflowY:"auto", padding:24 }}>
           {activeModule==="dashboard" && <Dashboard setActiveModule={setActiveModule} firm={firm}/>}
           {activeModule==="clients" && <Clients />}
-          {activeModule==="cash" && <CashManagement />}
+          {activeModule==="cash" && <CashManagement firm={firm}/>}
           {activeModule==="tasks" && <Tasks />}
           {activeModule==="billing" && <Billing firm={firm}/>}
           {activeModule==="documents" && <Documents />}
           {activeModule==="reports" && <Reports />}
-          {activeModule==="setup" && <FirmSetup firm={firm} setFirm={setFirm}/>}
+          {activeModule==="setup" && <FirmSetup firm={firm} setFirm={saveFirm} loading={firmLoading}/>}
         </div>
       </div>
     </div>
@@ -445,13 +525,7 @@ function Dashboard({ setActiveModule, firm }) {
 
 // ─── CLIENT MANAGEMENT ────────────────────────────────────────────────────────
 function Clients() {
-  const initClients = [
-    { id:1, name:"Mehta Traders Pvt. Ltd.", pan:"AABCM1234D", gst:"27AABCM1234D1Z5", type:"Corporate", status:"Active", email:"accounts@mehtatraders.com", phone:"9876543210", city:"Mumbai", joined:"2022-04-01" },
-    { id:2, name:"Suresh Patel", pan:"ABCPS5678E", gst:"", type:"Individual", status:"Active", email:"suresh.patel@gmail.com", phone:"9123456789", city:"Pune", joined:"2023-01-15" },
-    { id:3, name:"Jain & Co.", pan:"AAACJ9012F", gst:"24AAACJ9012F1ZX", type:"Partnership", status:"Active", email:"jainco@jainco.in", phone:"9000123456", city:"Ahmedabad", joined:"2021-06-10" },
-    { id:4, name:"Ram Enterprises", pan:"AABCE2345G", gst:"06AABCE2345G1Z1", type:"Corporate", status:"Inactive", email:"ram@ramenterprises.com", phone:"8888877777", city:"Delhi", joined:"2020-11-05" },
-  ];
-  const [clients, setClients] = useState(initClients);
+  const [clients, loading, addClient, updateClient, removeClient] = useTable("clients");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -463,14 +537,17 @@ function Clients() {
 
   const openAdd = () => { setEditClient(null); setForm({ name:"",pan:"",gst:"",type:"Individual",status:"Active",email:"",phone:"",city:"",joined:"" }); setModal(true); };
   const openEdit = (c) => { setEditClient(c); setForm({...c}); setModal(true); };
-  const save = () => {
+  const save = async () => {
     if(!form.name.trim()) return;
-    if(editClient) setClients(clients.map(c=>c.id===editClient.id?{...c,...form}:c));
-    else setClients([...clients, {...form, id:Date.now()}]);
+    const payload = { name:form.name, pan:form.pan, gst:form.gst, type:form.type, status:form.status,
+      email:form.email, phone:form.phone, city:form.city, joined:form.joined||null };
+    if(editClient) await updateClient(editClient.id, payload);
+    else await addClient(payload);
     setModal(false);
   };
-  const del = (id) => { if(window.confirm("Delete this client?")) setClients(clients.filter(c=>c.id!==id)); };
+  const del = async (id) => { if(window.confirm("Delete this client?")) await removeClient(id); };
 
+  if(loading) return <Spinner/>;
   const filtered = clients.filter(c => {
     const s = search.toLowerCase();
     const match = !s || c.name.toLowerCase().includes(s) || c.pan?.toLowerCase().includes(s) || c.email?.toLowerCase().includes(s) || c.city?.toLowerCase().includes(s);
@@ -558,17 +635,9 @@ function Clients() {
 }
 
 // ─── CASH MANAGEMENT ─────────────────────────────────────────────────────────
-const ACCOUNTS = ["HDFC Current", "SBI Savings", "Axis OD", "Petty Cash", "Cash in Hand"];
-
-function CashManagement() {
-  const initEntries = [
-    { id:1, date:"2024-03-15", type:"Receipt", particulars:"Audit fees from Mehta Traders", account:"HDFC Current", amount:50000, serviceCharge:0, scAccount:"", status:"Cleared", ref:"CHQ-001" },
-    { id:2, date:"2024-03-16", type:"Payment", particulars:"Office rent March", account:"HDFC Current", amount:25000, serviceCharge:0, scAccount:"", status:"Cleared", ref:"NEFT-002" },
-    { id:3, date:"2024-03-17", type:"Receipt", particulars:"GST filing fees – Jain & Co.", account:"SBI Savings", amount:8000, serviceCharge:180, scAccount:"Cash in Hand", status:"Pending", ref:"UPI-003" },
-    { id:4, date:"2024-03-18", type:"Receipt", particulars:"Consultation – Suresh Patel", account:"HDFC Current", amount:15000, serviceCharge:300, scAccount:"Petty Cash", status:"Cleared", ref:"NEFT-004" },
-    { id:5, date:"2024-03-19", type:"Payment", particulars:"Staff salaries", account:"SBI Savings", amount:80000, serviceCharge:0, scAccount:"", status:"Cleared", ref:"NEFT-005" },
-  ];
-  const [entries, setEntries] = useState(initEntries);
+function CashManagement({ firm }) {
+  const ACCOUNTS = (firm?.banks||[]).map(b=>b.label);
+  const [entries, loading, addEntry, updateEntry, removeEntry] = useTable("cash_entries");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -580,16 +649,18 @@ function CashManagement() {
   const [form, setForm] = useState({ date:"", type:"Receipt", particulars:"", account:"HDFC Current", amount:"", serviceCharge:"", scAccount:"Cash in Hand", status:"Cleared", ref:"" });
   const [customFields, setCustomFields] = useState([{ label:"Bank Reference No.", type:"text" }]);
 
-  const blankForm = { date:"", type:"Receipt", particulars:"", account:"HDFC Current", amount:"", serviceCharge:"", scAccount:"Cash in Hand", status:"Cleared", ref:"" };
-  const openEdit = (e) => { setEditEntry(e); setForm({...e, amount:String(e.amount), serviceCharge:String(e.serviceCharge)}); setModal(true); };
-  const save = () => {
+  const blankForm = { date:"", type:"Receipt", particulars:"", account:ACCOUNTS[0]||"HDFC Current", amount:"", serviceCharge:"", scAccount:ACCOUNTS[ACCOUNTS.length-1]||"Cash in Hand", status:"Cleared", ref:"" };
+  const openEdit = (e) => { setEditEntry(e); setForm({...e, amount:String(e.amount), serviceCharge:String(e.service_charge||e.serviceCharge||0), scAccount:e.sc_account||e.scAccount||""}); setModal(true); };
+  const save = async () => {
     if(!form.particulars||!form.amount) return;
-    const entry = {...form, amount:Number(form.amount), serviceCharge:Number(form.serviceCharge||0)};
-    if(editEntry) setEntries(entries.map(e=>e.id===editEntry.id?{...e,...entry}:e));
-    else setEntries([...entries, {...entry, id:Date.now()}]);
+    const payload = { date:form.date||null, type:form.type, particulars:form.particulars,
+      account:form.account, amount:Number(form.amount), service_charge:Number(form.serviceCharge||0),
+      sc_account:form.scAccount||"", status:form.status, ref:form.ref };
+    if(editEntry) await updateEntry(editEntry.id, payload);
+    else await addEntry(payload);
     setModal(false); setEditEntry(null); setForm(blankForm);
   };
-  const del = id => { if(window.confirm("Delete entry?")) setEntries(entries.filter(e=>e.id!==id)); };
+  const del = async id => { if(window.confirm("Delete entry?")) await removeEntry(id); };
 
   const filtered = entries.filter(e => {
     const s = search.toLowerCase();
@@ -600,9 +671,10 @@ function CashManagement() {
     return match && typeMatch && from && to;
   });
 
+  if(loading) return <Spinner/>;
   const totalReceipts = filtered.filter(e=>e.type==="Receipt").reduce((s,e)=>s+e.amount,0);
   const totalPayments = filtered.filter(e=>e.type==="Payment").reduce((s,e)=>s+e.amount,0);
-  const totalServiceCharges = filtered.reduce((s,e)=>s+(e.serviceCharge||0),0);
+  const totalServiceCharges = filtered.reduce((s,e)=>s+(e.service_charge||0),0);
   const netBalance = totalReceipts - totalPayments;
 
   const fmt = n => "₹" + Number(n).toLocaleString("en-IN");
@@ -611,7 +683,7 @@ function CashManagement() {
   const accountSummary = ACCOUNTS.map(acc => {
     const mainIn  = filtered.filter(e=>e.account===acc && e.type==="Receipt").reduce((s,e)=>s+e.amount,0);
     const mainOut = filtered.filter(e=>e.account===acc && e.type==="Payment").reduce((s,e)=>s+e.amount,0);
-    const scOut   = filtered.filter(e=>e.scAccount===acc && e.serviceCharge>0).reduce((s,e)=>s+(e.serviceCharge||0),0);
+    const scOut   = filtered.filter(e=>(e.sc_account||e.scAccount)===acc && (e.service_charge||0)>0).reduce((s,e)=>s+(e.service_charge||0),0);
     return { acc, mainIn, mainOut, scOut, net: mainIn - mainOut - scOut };
   }).filter(a => a.mainIn||a.mainOut||a.scOut);
 
@@ -700,16 +772,16 @@ function CashManagement() {
                 <td style={{ padding:"11px 14px", fontSize:13, fontWeight:700, color: e.type==="Receipt"?"#059669":"#dc2626", whiteSpace:"nowrap" }}>{fmt(e.amount)}</td>
                 {showServiceCharges && <>
                   <td style={{ padding:"11px 14px", fontSize:13, color:"#d97706", fontWeight: e.serviceCharge>0?700:400, whiteSpace:"nowrap" }}>
-                    {e.serviceCharge>0 ? fmt(e.serviceCharge) : <span style={{ color:"#d1d5db" }}>—</span>}
+                    {e.service_charge>0 ? fmt(e.service_charge) : <span style={{ color:"#d1d5db" }}>—</span>}
                   </td>
                   <td style={{ padding:"11px 14px" }}>
-                    {e.serviceCharge>0 && e.scAccount ? (
+                    {e.service_charge>0 && (e.sc_account||e.scAccount) ? (
                       <div style={{ display:"inline-flex", alignItems:"center", gap:5, background:"#fff7ed", borderRadius:6, padding:"3px 8px", fontSize:12, fontWeight:600, color:"#c2410c" }}>
-                        {e.scAccount==="Cash in Hand" || e.scAccount==="Petty Cash" ? "💵" : "🏦"} {e.scAccount}
+                        {(e.sc_account||e.scAccount)==="Cash in Hand"||(e.sc_account||e.scAccount)==="Petty Cash"?"💵":"🏦"} {e.sc_account||e.scAccount}
                       </div>
                     ) : <span style={{ color:"#d1d5db", fontSize:13 }}>—</span>}
                   </td>
-                  <td style={{ padding:"11px 14px", fontSize:13, fontWeight:700, color:"#374151", whiteSpace:"nowrap" }}>{fmt(e.amount + (e.serviceCharge||0))}</td>
+                  <td style={{ padding:"11px 14px", fontSize:13, fontWeight:700, color:"#374151", whiteSpace:"nowrap" }}>{fmt(e.amount + (e.service_charge||0))}</td>
                 </>}
                 <td style={{ padding:"11px 14px" }}><Badge label={e.status} color={e.status==="Cleared"?"green":e.status==="Bounced"?"red":"yellow"}/></td>
                 <td style={{ padding:"11px 14px", fontSize:12, color:"#9ca3af", fontFamily:"monospace" }}>{e.ref}</td>
@@ -732,7 +804,7 @@ function CashManagement() {
                 <td style={{ padding:"12px 14px", fontWeight:800, color:"#d97706", whiteSpace:"nowrap" }}>{fmt(totalServiceCharges)}</td>
                 <td/>
                 <td style={{ padding:"12px 14px", fontWeight:900, color: netBalance>=0?"#059669":"#dc2626", whiteSpace:"nowrap" }}>
-                  {fmt(filtered.reduce((s,e)=>e.type==="Receipt"?s+e.amount+(e.serviceCharge||0):s-e.amount,0))}
+                  {fmt(filtered.reduce((s,e)=>e.type==="Receipt"?s+e.amount+(e.service_charge||0):s-e.amount,0))}
                 </td>
               </>}
               <td colSpan={3}/>
@@ -864,13 +936,7 @@ function CashManagement() {
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
 function Tasks() {
-  const initTasks = [
-    { id:1, title:"GST Return Q3 – Mehta Traders", client:"Mehta Traders Pvt. Ltd.", type:"GST Filing", priority:"High", due:"2024-03-20", status:"In Progress", assigned:"CA Priya" },
-    { id:2, title:"Income Tax Return FY23-24 – Suresh Patel", client:"Suresh Patel", type:"IT Return", priority:"Medium", due:"2024-07-31", status:"Pending", assigned:"CA Rahul" },
-    { id:3, title:"Statutory Audit – Ram Enterprises", client:"Ram Enterprises", type:"Audit", priority:"High", due:"2024-04-15", status:"Pending", assigned:"CA Priya" },
-    { id:4, title:"TDS Filing Q3 – Jain & Co.", client:"Jain & Co.", type:"TDS", priority:"Low", due:"2024-03-31", status:"Completed", assigned:"CA Rahul" },
-  ];
-  const [tasks, setTasks] = useState(initTasks);
+  const [tasks, loading, addTask, updateTask, removeTask] = useTable("tasks");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -881,15 +947,20 @@ function Tasks() {
   const [customFields, setCustomFields] = useState([{ label:"Remarks", type:"textarea" }]);
 
   const openEdit = (t) => { setEditTask(t); setForm({...t}); setModal(true); };
-  const del = (id) => { if(window.confirm("Delete task?")) setTasks(tasks.filter(t=>t.id!==id)); };
-  const save = () => {
+  const del = async (id) => { if(window.confirm("Delete task?")) await removeTask(id); };
+  const save = async () => {
     if(!form.title) return;
-    if(editTask) setTasks(tasks.map(t=>t.id===editTask.id?{...t,...form}:t));
-    else setTasks([...tasks, {...form, id:Date.now()}]);
+    const payload = { title:form.title, client:form.client, type:form.type,
+      priority:form.priority, due:form.due||null, status:form.status, assigned:form.assigned };
+    if(editTask) await updateTask(editTask.id, payload);
+    else await addTask(payload);
     setModal(false); setEditTask(null);
     setForm({ title:"",client:"",type:"GST Filing",priority:"Medium",due:"",status:"Pending",assigned:"" });
   };
-  const toggleStatus = (id) => setTasks(tasks.map(t => t.id===id ? {...t, status: t.status==="Completed"?"Pending":"Completed"} : t));
+  const toggleStatus = async (id) => {
+    const t = tasks.find(x=>x.id===id);
+    if(t) await updateTask(id, { status: t.status==="Completed"?"Pending":"Completed" });
+  };
 
   const filtered = tasks.filter(t => {
     const s = search.toLowerCase();
@@ -900,6 +971,7 @@ function Tasks() {
     return match && pFilter && from && to;
   });
 
+  if(loading) return <Spinner/>;
   const priorityColor = { High:"red", Medium:"yellow", Low:"green" };
   const statusColor = { Completed:"green", "In Progress":"blue", Pending:"gray" };
 
@@ -975,13 +1047,7 @@ function Tasks() {
 
 // ─── BILLING ─────────────────────────────────────────────────────────────────
 function Billing({ firm }) {
-  const initInvoices = [
-    { id:1, no:"INV-0087", client:"Mehta Traders Pvt. Ltd.", services:"Audit + GST Filing", date:"2024-03-01", due:"2024-03-31", amount:75000, tax:13500, status:"Paid" },
-    { id:2, no:"INV-0088", client:"Jain & Co.", services:"TDS Compliance Q3", date:"2024-03-05", due:"2024-04-05", amount:12000, tax:2160, status:"Pending" },
-    { id:3, no:"INV-0089", client:"Suresh Patel", services:"IT Return FY23", date:"2024-03-10", due:"2024-04-10", amount:8000, tax:1440, status:"Pending" },
-    { id:4, no:"INV-0090", client:"Ram Enterprises", services:"Bookkeeping Mar", date:"2024-03-15", due:"2024-03-30", amount:18000, tax:3240, status:"Overdue" },
-  ];
-  const [invoices, setInvoices] = useState(initInvoices);
+  const [invoices, loading, addInvoice, updateInvoice, removeInvoice] = useTable("invoices");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -992,18 +1058,21 @@ function Billing({ firm }) {
   const [form, setForm] = useState({ no:"", client:"", services:"", date:"", due:"", amount:"", tax:"", status:"Pending" });
   const [customFields, setCustomFields] = useState([{ label:"Payment Mode", type:"select" }]);
 
-  const nextNo = `INV-${String(Math.max(...invoices.map(i=>parseInt(i.no.split("-")[1])))+1).padStart(4,"0")}`;
+  const nextNo = invoices.length===0 ? "INV-0001"
+    : `INV-${String(Math.max(...invoices.map(i=>parseInt((i.no||"INV-0000").split("-")[1]||0)))+1).padStart(4,"0")}`;
 
   const openAdd = () => { setEditInv(null); setForm({ no:nextNo, client:"", services:"", date:"", due:"", amount:"", tax:"", status:"Pending" }); setModal(true); };
   const openEdit = (i) => { setEditInv(i); setForm({...i, amount:String(i.amount), tax:String(i.tax)}); setModal(true); };
-  const save = () => {
+  const save = async () => {
     if(!form.client||!form.amount) return;
-    const inv = {...form, amount:Number(form.amount), tax:Number(form.tax||0)};
-    if(editInv) setInvoices(invoices.map(i=>i.id===editInv.id?{...i,...inv}:i));
-    else setInvoices([...invoices, {...inv, id:Date.now()}]);
+    const payload = { no:form.no, client:form.client, services:form.services,
+      date:form.date||null, due:form.due||null,
+      amount:Number(form.amount), tax:Number(form.tax||0), status:form.status };
+    if(editInv) await updateInvoice(editInv.id, payload);
+    else await addInvoice(payload);
     setModal(false); setEditInv(null);
   };
-  const del = id => { if(window.confirm("Delete invoice?")) setInvoices(invoices.filter(i=>i.id!==id)); };
+  const del = async id => { if(window.confirm("Delete invoice?")) await removeInvoice(id); };
 
   const filtered = invoices.filter(i => {
     const s = search.toLowerCase();
@@ -1014,6 +1083,7 @@ function Billing({ firm }) {
     return match && sf && from && to;
   });
 
+  if(loading) return <Spinner/>;
   const fmt = n => "₹" + Number(n).toLocaleString("en-IN");
   const statusColor = { Paid:"green", Pending:"yellow", Overdue:"red", Draft:"gray" };
 
@@ -1110,13 +1180,7 @@ function Billing({ firm }) {
 
 // ─── DOCUMENTS ───────────────────────────────────────────────────────────────
 function Documents() {
-  const initDocs = [
-    { id:1, name:"Balance Sheet FY23 – Ram Enterprises.pdf", client:"Ram Enterprises", category:"Financial Statements", date:"2024-03-01", size:"2.4 MB", status:"Final" },
-    { id:2, name:"GST Return Q3 – Mehta Traders.xlsx", client:"Mehta Traders Pvt. Ltd.", category:"GST", date:"2024-03-10", size:"845 KB", status:"Draft" },
-    { id:3, name:"IT Return FY22-23 – Suresh Patel.pdf", client:"Suresh Patel", category:"Income Tax", date:"2024-02-20", size:"1.1 MB", status:"Final" },
-    { id:4, name:"Audit Report Mar 24 – Jain & Co.docx", client:"Jain & Co.", category:"Audit", date:"2024-03-18", size:"3.2 MB", status:"Review" },
-  ];
-  const [docs, setDocs] = useState(initDocs);
+  const [docs, loading, addDoc, updateDoc, removeDoc] = useTable("documents");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1144,6 +1208,7 @@ function Documents() {
     return match && cf && from && to;
   });
 
+  if(loading) return <Spinner/>;
   const extColor = { pdf:"#dc2626", xlsx:"#059669", docx:"#2563eb", pptx:"#d97706" };
   const ext = name => name.split(".").pop().toLowerCase();
 
@@ -1180,7 +1245,7 @@ function Documents() {
               <div style={{ display:"flex", gap:6 }}>
                 <button style={{ padding:"5px 7px", background:"#f0fdf4", border:"none", borderRadius:6, cursor:"pointer", color:"#059669", display:"flex" }}><Icon name="download" size={13}/></button>
                 <button onClick={()=>openEditDoc(d)} style={{ padding:"5px 7px", background:"#eff6ff", border:"none", borderRadius:6, cursor:"pointer", color:"#2563eb", display:"flex" }}><Icon name="edit" size={13}/></button>
-                <button onClick={()=>setDocs(docs.filter(x=>x.id!==d.id))} style={{ padding:"5px 7px", background:"#fee2e2", border:"none", borderRadius:6, cursor:"pointer", color:"#dc2626", display:"flex" }}><Icon name="trash" size={13}/></button>
+                <button onClick={async()=>{ if(window.confirm("Delete document?")) await removeDoc(d.id); }} style={{ padding:"5px 7px", background:"#fee2e2", border:"none", borderRadius:6, cursor:"pointer", color:"#dc2626", display:"flex" }}><Icon name="trash" size={13}/></button>
               </div>
             </div>
             <div style={{ fontSize:11, color:"#9ca3af", marginTop:8 }}>{d.date} · {d.size}</div>
@@ -1565,15 +1630,22 @@ function InvoiceViewer({ inv, firm, onClose }) {
           </div>
 
           {/* Bank details */}
-          {f.bankName && (
+          {(f.banks||[]).filter(b=>b.type!=="Cash"&&b.accountNo).length > 0 && (
             <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:10, padding:16, marginBottom:24 }}>
-              <div style={{ fontSize:11, fontWeight:800, color:"#0369a1", textTransform:"uppercase", letterSpacing:".05em", marginBottom:10 }}>Bank Details for Payment</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 20px", fontSize:13 }}>
-                <div><span style={{color:"#6b7280"}}>Bank: </span><strong>{f.bankName}</strong></div>
-                <div><span style={{color:"#6b7280"}}>Branch: </span><strong>{f.bankBranch}</strong></div>
-                <div><span style={{color:"#6b7280"}}>A/C No: </span><strong style={{fontFamily:"monospace"}}>{f.bankAccount}</strong></div>
-                <div><span style={{color:"#6b7280"}}>IFSC: </span><strong style={{fontFamily:"monospace"}}>{f.bankIFSC}</strong></div>
-              </div>
+              <div style={{ fontSize:11, fontWeight:800, color:"#0369a1", textTransform:"uppercase", letterSpacing:".05em", marginBottom:12 }}>Bank Details for Payment</div>
+              {[...(f.banks||[])].sort((a,b)=>b.primary-a.primary).filter(b=>b.type!=="Cash"&&b.accountNo).map(b=>(
+                <div key={b.id} style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"4px 20px", fontSize:13,
+                  marginBottom:10, paddingBottom:10, borderBottom:"1px solid #e0f2fe" }}>
+                  <div style={{ gridColumn:"1/-1", display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                    <span style={{ fontWeight:800, color:"#0c4a6e", fontSize:14 }}>🏦 {b.label}</span>
+                    {b.primary && <span style={{ background:"#dcfce7", color:"#15803d", borderRadius:4, padding:"1px 7px", fontSize:11, fontWeight:700 }}>Primary</span>}
+                  </div>
+                  <div><span style={{color:"#6b7280"}}>Bank: </span><strong>{b.bankName}</strong></div>
+                  <div><span style={{color:"#6b7280"}}>Branch: </span><strong>{b.branch}</strong></div>
+                  <div><span style={{color:"#6b7280"}}>A/C No: </span><strong style={{fontFamily:"monospace"}}>{b.accountNo}</strong></div>
+                  <div><span style={{color:"#6b7280"}}>IFSC: </span><strong style={{fontFamily:"monospace"}}>{b.ifsc}</strong></div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -1589,11 +1661,24 @@ function InvoiceViewer({ inv, firm, onClose }) {
 }
 
 // ─── FIRM SETUP ───────────────────────────────────────────────────────────────
-function FirmSetup({ firm, setFirm }) {
-  const [form, setForm] = useState({...firm});
+function FirmSetup({ firm, setFirm, loading }) {
+  const [form, setForm] = useState({...firm, banks: firm.banks ? [...firm.banks] : []});
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [bankModal, setBankModal] = useState(false);
+  const [editBank, setEditBank] = useState(null);
+  const [bankForm, setBankForm] = useState({ label:"", bankName:"", accountNo:"", ifsc:"", branch:"", type:"Current", primary:false });
 
-  const save = () => { setFirm({...form}); setSaved(true); setTimeout(()=>setSaved(false), 2500); };
+  // Sync form when firm loads from DB
+  useEffect(() => { setForm({...firm, banks: firm.banks ? [...firm.banks] : []}); }, [firm]);
+
+  const save = async () => {
+    setSaving(true);
+    await setFirm({...form});
+    setSaving(false);
+    setSaved(true);
+    setTimeout(()=>setSaved(false), 2500);
+  };
 
   const Section = ({ title, children }) => (
     <div style={{ background:"#fff", borderRadius:14, padding:24, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", marginBottom:16 }}>
@@ -1619,8 +1704,8 @@ function FirmSetup({ firm, setFirm }) {
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           {saved && <span style={{ color:"#059669", fontWeight:700, fontSize:13 }}>✓ Saved successfully!</span>}
-          <button onClick={save} style={{ padding:"10px 24px", background:"#2563eb", color:"#fff", border:"none", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:14 }}>
-            Save Settings
+          <button onClick={save} disabled={saving} style={{ padding:"10px 24px", background:saving?"#93c5fd":"#2563eb", color:"#fff", border:"none", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:14 }}>
+            {saving?"Saving…":"Save Settings"}
           </button>
         </div>
       </div>
@@ -1645,12 +1730,118 @@ function FirmSetup({ firm, setFirm }) {
         <SF label="Website" fkey="website" placeholder="www.yourfirm.com"/>
       </Section>
 
-      <Section title="🏦 Bank Details (for Invoices)">
-        <SF label="Bank Name" fkey="bankName" placeholder="e.g. HDFC Bank"/>
-        <SF label="Branch" fkey="bankBranch" placeholder="Branch name"/>
-        <SF label="Account Number" fkey="bankAccount" placeholder="Account number"/>
-        <SF label="IFSC Code" fkey="bankIFSC" placeholder="HDFC0001234"/>
-      </Section>
+      {/* ── BANK ACCOUNTS MANAGER ── */}
+      <div style={{ background:"#fff", borderRadius:14, padding:24, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", marginBottom:16 }}>
+        <div style={{ fontSize:13, fontWeight:800, color:"#1d4ed8", textTransform:"uppercase", letterSpacing:".05em",
+          marginBottom:18, paddingBottom:12, borderBottom:"2px solid #eff6ff", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span>🏦 Bank Accounts & Cash Accounts</span>
+          <button onClick={()=>{ setBankForm({label:"",bankName:"",accountNo:"",ifsc:"",branch:"",type:"Current",primary:false}); setEditBank(null); setBankModal(true); }}
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", background:"#2563eb", color:"#fff",
+              border:"none", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>
+            <Icon name="plus" size={13}/> Add Account
+          </button>
+        </div>
+
+        {/* Bank list */}
+        {(form.banks||[]).length === 0 && (
+          <div style={{ textAlign:"center", color:"#9ca3af", padding:"24px 0", fontSize:13 }}>No bank accounts added yet</div>
+        )}
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {(form.banks||[]).map(b => (
+            <div key={b.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
+              background: b.primary?"#eff6ff":"#f8fafc", borderRadius:10,
+              border:`1px solid ${b.primary?"#bfdbfe":"#e5e7eb"}` }}>
+              {/* Icon */}
+              <div style={{ width:38, height:38, borderRadius:10, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18,
+                background: b.type==="Cash"?"#fef9c3":b.type==="OD"?"#fef2f2":"#eff6ff" }}>
+                {b.type==="Cash"?"💵":b.type==="OD"?"🔄":"🏦"}
+              </div>
+              {/* Details */}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontWeight:800, fontSize:14, color:"#111" }}>{b.label}</span>
+                  <span style={{ background:"#e0f2fe", color:"#0369a1", borderRadius:4, padding:"1px 7px", fontSize:11, fontWeight:700 }}>{b.type}</span>
+                  {b.primary && <span style={{ background:"#dcfce7", color:"#15803d", borderRadius:4, padding:"1px 7px", fontSize:11, fontWeight:700 }}>Primary</span>}
+                </div>
+                <div style={{ fontSize:12, color:"#6b7280", marginTop:3 }}>
+                  {b.bankName}{b.accountNo ? ` · A/C: ${b.accountNo}` : ""}{b.ifsc ? ` · IFSC: ${b.ifsc}` : ""}{b.branch ? ` · ${b.branch}` : ""}
+                </div>
+              </div>
+              {/* Actions */}
+              <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                {!b.primary && (
+                  <button onClick={()=>{ setForm(f=>({...f, banks:f.banks.map(x=>({...x, primary:x.id===b.id}))})); }}
+                    title="Set as Primary" style={{ padding:"5px 10px", background:"#f0fdf4", border:"1px solid #bbf7d0",
+                      borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700, color:"#15803d" }}>★ Primary</button>
+                )}
+                <button onClick={()=>{ setEditBank(b); setBankForm({...b}); setBankModal(true); }}
+                  style={{ padding:"5px 8px", background:"#eff6ff", border:"none", borderRadius:6, cursor:"pointer", color:"#2563eb", display:"flex" }}>
+                  <Icon name="edit" size={13}/>
+                </button>
+                <button onClick={()=>{ if(window.confirm("Delete this account?")) setForm(f=>({...f, banks:f.banks.filter(x=>x.id!==b.id)})); }}
+                  style={{ padding:"5px 8px", background:"#fee2e2", border:"none", borderRadius:6, cursor:"pointer", color:"#dc2626", display:"flex" }}>
+                  <Icon name="trash" size={13}/>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop:12, fontSize:12, color:"#9ca3af" }}>
+          💡 These accounts appear in Cash Management dropdowns and on invoices. Mark one as Primary for invoices.
+        </div>
+      </div>
+
+      {/* Bank Modal */}
+      <Modal open={bankModal} onClose={()=>setBankModal(false)} title={editBank?"Edit Account":"Add Bank / Cash Account"} width={500}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+          <div style={{ gridColumn:"1/-1" }}>
+            <Field label="Display Label (used in dropdowns)" required>
+              <Input value={bankForm.label} onChange={e=>setBankForm({...bankForm,label:e.target.value})} placeholder="e.g. HDFC Current, Petty Cash"/>
+            </Field>
+          </div>
+          <Field label="Account Type">
+            <Select value={bankForm.type} onChange={e=>setBankForm({...bankForm,type:e.target.value})}>
+              {["Current","Savings","OD","FD","Cash","Other"].map(t=><option key={t}>{t}</option>)}
+            </Select>
+          </Field>
+          <Field label="Bank Name">
+            <Input value={bankForm.bankName} onChange={e=>setBankForm({...bankForm,bankName:e.target.value})} placeholder="e.g. HDFC Bank"/>
+          </Field>
+          <Field label="Account Number">
+            <Input value={bankForm.accountNo} onChange={e=>setBankForm({...bankForm,accountNo:e.target.value})} placeholder="Account number"/>
+          </Field>
+          <Field label="IFSC Code">
+            <Input value={bankForm.ifsc} onChange={e=>setBankForm({...bankForm,ifsc:e.target.value.toUpperCase()})} placeholder="HDFC0001234"/>
+          </Field>
+          <div style={{ gridColumn:"1/-1" }}>
+            <Field label="Branch">
+              <Input value={bankForm.branch} onChange={e=>setBankForm({...bankForm,branch:e.target.value})} placeholder="Branch name & city"/>
+            </Field>
+          </div>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
+              <input type="checkbox" checked={!!bankForm.primary} onChange={e=>setBankForm({...bankForm,primary:e.target.checked})}
+                style={{ width:16, height:16, accentColor:"#2563eb" }}/>
+              <span style={{ fontSize:13, fontWeight:600, color:"#374151" }}>Set as Primary account (shown first on invoices)</span>
+            </label>
+          </div>
+        </div>
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:20 }}>
+          <button onClick={()=>setBankModal(false)} style={{ padding:"10px 20px", background:"#f3f4f6", border:"none", borderRadius:8, cursor:"pointer", fontWeight:600 }}>Cancel</button>
+          <button onClick={()=>{
+            if(!bankForm.label.trim()) return;
+            if(editBank) {
+              setForm(f=>({...f, banks:f.banks.map(b=>b.id===editBank.id?{...b,...bankForm}:b)}));
+            } else {
+              const newId = Date.now();
+              setForm(f=>({...f, banks:[...(f.banks||[]), {...bankForm, id:newId}]}));
+            }
+            setBankModal(false); setEditBank(null);
+          }} style={{ padding:"10px 20px", background:"#2563eb", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
+            {editBank?"Update Account":"Add Account"}
+          </button>
+        </div>
+      </Modal>
 
       <Section title="🧾 Invoice Settings">
         <SF label="Invoice Prefix" fkey="invoicePrefix" placeholder="INV"/>
@@ -1681,8 +1872,8 @@ function FirmSetup({ firm, setFirm }) {
       </div>
 
       <div style={{ display:"flex", justifyContent:"flex-end" }}>
-        <button onClick={save} style={{ padding:"12px 32px", background:"#2563eb", color:"#fff", border:"none", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:15 }}>
-          💾 Save All Settings
+        <button onClick={save} disabled={saving} style={{ padding:"12px 32px", background:saving?"#93c5fd":"#2563eb", color:"#fff", border:"none", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:15 }}>
+          {saving?"💾 Saving…":"💾 Save All Settings"}
         </button>
       </div>
     </div>
