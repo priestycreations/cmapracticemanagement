@@ -47,13 +47,15 @@ function useTable(table, init = []) {
 function useFirmSettings(defaultFirm) {
   const [firm, setFirmState] = useState(defaultFirm);
   const [firmLoading, setFirmLoading] = useState(true);
+  const defaultRef = useRef(defaultFirm);
 
   useEffect(() => {
     (async () => {
       const { data } = await sb.from("firm_settings").select("data").eq("firm_id","default").single();
-      if (data?.data && Object.keys(data.data).length > 0) setFirmState({...defaultFirm, ...data.data});
+      if (data?.data && Object.keys(data.data).length > 0) setFirmState(prev => ({...defaultRef.current, ...data.data}));
       setFirmLoading(false);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveFirm = async (newFirm) => {
