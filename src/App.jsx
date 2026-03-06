@@ -3,8 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 
 // ─── SUPABASE CLIENT ──────────────────────────────────────────────────────────
 // Replace these two values with your own from supabase.com → Project Settings → API
-const SUPABASE_URL  = "https://xokbxkhkkjchptuaajog.supabase.co";
-const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhva2J4a2hra2pjaHB0dWFham9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MTQ5NjEsImV4cCI6MjA4ODI5MDk2MX0.vlWPzI4K8y7GKhdru4lwRpfjoeAd-o8aHzMGWCB-Bdw";
+const SUPABASE_URL  = "https://YOUR_PROJECT_ID.supabase.co";
+const SUPABASE_ANON = "YOUR_ANON_PUBLIC_KEY";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ─── GENERIC DB HOOK ─────────────────────────────────────────────────────────
@@ -1191,10 +1191,12 @@ function Documents() {
   const openEditDoc = (d) => { setEditDoc(d); setForm({...d}); setModal(true); };
   const [customFields, setCustomFields] = useState([{ label:"Document Version", type:"text" }]);
 
-  const save = () => {
+  const save = async () => {
     if(!form.name) return;
-    if(editDoc) setDocs(docs.map(d=>d.id===editDoc.id?{...d,...form}:d));
-    else setDocs([...docs, {...form, id:Date.now(), size:"—"}]);
+    const payload = { name:form.name, client:form.client, category:form.category,
+      date:form.date||null, status:form.status, size:"—" };
+    if(editDoc) await updateDoc(editDoc.id, payload);
+    else await addDoc(payload);
     setModal(false); setEditDoc(null);
     setForm({ name:"", client:"", category:"GST", date:"", status:"Draft" });
   };
